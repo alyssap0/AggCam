@@ -1,0 +1,83 @@
+#This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+#You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#Contact alyssa.macmillan@yahoo.com.au for more details.
+
+#Install Python on Raspberry Pi
+#Downloading Python source archive example
+wget https://www.python.org/ftp/python/3.12.7/Python-3.12.7.tgz
+
+#Navigating to directory in this case for the Python installation
+cd ~/Downloads
+
+#Extract the file
+tar -xvf Python-3.12.7.tgz
+
+#Navigate to the extracted directory and run the configure script
+Cd Python-3.12.7
+./configure –enable-optimizations
+
+#Build and install 
+make -j 4
+sudo make alt install
+#Open and edit the config file
+sudo nano /boot/firmware/config.txt
+
+#Sound must be disabled to use GPIO18 (pin hole) so we must change “dtparam=audio=on” to “dtparam=audio=off” and rebooting. 
+#Must install Python packages using APT. Run these to test; 
+sudo apt install python3-requests
+
+#Need to create a virtual environment to operate Python within Raspberry Pi environment. First install the virtual environment run:
+sudo apt install python3-venv
+
+#Then create a virtual environment in directory.
+python3 -m venv .venv
+
+#Activate virtual environment. Modifies your PATH environment so you can install PyPI packages using pip. 
+source .venv/bin/activate 
+.venv/bin/pip install requests
+#If this comes up with an error, re-running the code often worked. 
+
+#Next install software required for operating NeoPixel Jewels (LEDs used in this project)
+.venv/bin/pip install Adafruit-Blinka
+
+.venv/bin/pip install rpi_ws281x adafruit-circuitpython-neopixel
+ 
+.venv/bin/pip install --force-reinstall adafruit-blinka
+ 
+.venv/bin/pip install ptpython #This is important for controlling LEDs
+
+#Then activate ownership
+sudo su
+
+#Enter the python space where you can operate LEDs
+ptpython
+
+#Connect the LEDs to the corresponding GPIO pins (see https://pinout.xyz/pinout/pin12_gpio18/). My NeoPixels were connected to D18 and D10. 
+
+# Simple test for NeoPixels on Raspberry Pi 
+import time 
+import board 
+import neopixel
+
+#Label the lights. Board fullstop GPIO number followed by the number of LEDs on the board, followed by bits per pixel which tells the computer how many colours in our case 4 (RGBW). 
+pixels1 = neopixel.NeoPixel(board.D18, 7, bpp=4)
+pixels2 = neopixel.NeoPixel(board.D21, 7, bpp=4)
+
+#Turning all the pixels red: 
+pixels1.fill((255, 0, 0))
+pixels2.fill((255, 0, 0))
+
+#Turn off all pixels
+pixels1.fill((0, 0, 0))
+pixels2.fill((0, 0, 0))
+
+#To get out of ptpython 
+“Ctrl Z”
+
+#To get out of virtual environment
+Deactivate
