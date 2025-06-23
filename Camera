@@ -1,0 +1,59 @@
+#This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+#You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#Email alyssa.macmillan@yahoo.com.au for more details. 
+
+#Required shell and installations
+wget https://github.com/ArduCAM/Arducam-Pivariety-V4L2-Driver/releases/download/install_script/install_pivariety_pkgs.sh
+
+chmod +x install_pivariety_pkgs.sh
+
+./install_pivariety_pkgs.sh -p 64mp_pi_hawk_eye_kernel_driver
+
+./install_pivariety_pkgs.sh -p libcamera_dev
+
+./install_pivariety_pkgs.sh -p libcamera_apps
+
+#Keep the kernel up-to-date and restart after upgrading
+sudo apt-get update
+sudo apt-get upgrade
+
+#Check kernel version
+uname -v | grep -oP '\d+\.\d+\.\d+'
+
+#If 6.1.73 and above continue (6.6.51 is my version)
+
+#Enable the camera driver by first opening and editing the config file (this directory may change based on where your config.txt file is located – you can check this by going into the file folder and searching for the file). 
+
+sudo nano /boot/firmware/config.txt or sudo raspi-config
+
+#Add dtoverlay to enable the OwlSight Camera under the [all] in the config file at the bottom
+dtoverlay=ov64a40,link-frequency=360000000
+camera_auto_detect=0
+
+#Add the following dtoverlay line under [pi4]
+dtoverlay=vc4-kms-v3d,cma-256 #This also enables legacy camera stack which is required for timing consecutive photos. 
+
+#Reboot 
+sudo reboot
+
+#Use libcamera to access Arducam 64MP Camera
+libcamera-hello
+
+#Pulls up all the settings required 
+Libcamera-h
+
+#Started capturing images where:
+#-t is program running time (milliseconds)
+#--timelapse is the length of time to perform the capture (milliseconds)
+#--datetime saves images with date/time stamp
+#--lens-position defines focal distance (dioptres)
+#--width specifies width of image (pixels)
+#--height specifies height of image (pixels)
+
+#Execution code
+libcamera-still -t 3600000 –timelapse 30000 –datetime –width 4624 –height 3472 –lens-position 16
