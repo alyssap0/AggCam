@@ -1,0 +1,178 @@
+#This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+#You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#Contact alyssa.macmillan@yahoo.com.au for more details.
+
+import cv2
+import numpy as np
+import pandas as pd
+import os
+from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor
+from tqdm import tqdm
+
+# Constants
+original_width = 4624
+original_height = 3472
+original_pixels_per_mm = 40.92
+
+# Define the image processing function
+def process_image(args):
+    input_folder, filename, original_width, original_height, original_pixels_per_mm = args
+
+    image_path = os.path.join(input_folder, filename)
+    image = cv2.imread(image_path)
+    if image is None:
+        return []
+
+    creation_time = os.path.getctime(image_path)
+    date_taken = datetime.fromtimestamp(creation_time).strftime('%Y-%m-%d')
+
+    height, width = image.shape[:2]
+    pixel_to_mm = 1 / original_pixels_per_mm
+    if (width, height) != (original_width, original_height):
+        scale_x = width / original_width
+        scale_y = height / original_height
+        pixel_to_mm = 1 / (original_pixels_per_mm * ((scale_x + scale_y) / 2))
+
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray_clahe = clahe.apply(gray)
+
+    lower_red1 = np.array([0, 15, 20])
+    upper_red1 = np.array([12, 255, 255])
+    lower_red2 = np.array([165, 15, 20])
+    upper_red2 = np.array([180, 255, 255])
+    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+    mask_red = cv2.bitwise_or(mask1, mask2)
+    mask_red = cv2.morphologyEx(mask_red, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=1)
+
+    contours, _ = cv2.findContours(mask_red, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours = [cnt for cnt in contours if cv2.contourArea(cnt) > 20]
+
+    folder_parts = os.path.normpath(input_folder).split(os.sep)
+    experiment_no = folder_parts[-3]
+    microcosm_no = folder_parts[-2]
+    day_no = ''.join(filter(str.isdigit, folder_parts[-1]))
+
+    data = []
+
+    for i, contour in enumerate(contours):
+        area = cv2.contourArea(contour)
+        perimeter = cv2.arcLength(contour, True)
+        circularity = (4 * np.pi * area) / (perimeter ** 2) if perimeter > 0 else 0
+        x, y, w, h = cv2.boundingRect(contour)
+        aspect_ratio = w / h if h > 0 else 0
+        elongation = 1 - (w / h) if h > 0 else 0
+        esd = 2 * np.sqrt(area / np.pi)
+        rect = cv2.minAreaRect(contour)
+        box_w, box_h = rect[1]
+        length, width = max(box_w, box_h), min(box_w, box_h)
+        volume = (4 / 3) * np.pi * (esd / 2) ** 3
+
+        contour_mask = np.zeros_like(mask_red)
+        cv2.drawContours(contour_mask, [contour], -1, 255, cv2.FILLED)
+
+        gray_inside = cv2.bitwise_and(gray_clahe, gray_clahe, mask=contour_mask)
+        blurred = cv2.GaussianBlur(gray_inside, (5, 5), 0)
+        adaptive_thresh = cv2.adaptiveThreshold(
+            blurred, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 11, 2
+        )
+        masked_holes = cv2.bitwise_and(adaptive_thresh, adaptive_thresh, mask=contour_mask)
+
+        hole_contours, _ = cv2.findContours(masked_holes, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        black_hole_areas = []
+        for hole in hole_contours:
+            if cv2.contourArea(hole) > 1:
+                hole_mask = np.zeros_like(gray)
+                cv2.drawContours(hole_mask, [hole], -1, 255, -1)
+                overlap = cv2.bitwise_and(hole_mask, contour_mask)
+                if np.array_equal(hole_mask, overlap):
+                    black_hole_areas.append(cv2.contourArea(hole))
+
+        num_holes = len(black_hole_areas)
+        total_hole_area = sum(black_hole_areas)
+        total_hole_area_mm2 = total_hole_area * (pixel_to_mm ** 2)
+        porosity = total_hole_area / area if area > 0 else 0
+
+        aggregate_pixels = cv2.bitwise_and(gray, gray, mask=contour_mask)
+        pixels = aggregate_pixels[contour_mask == 255]
+        mean_brightness = np.mean(pixels)
+        min_brightness = np.min(pixels)
+        max_brightness = np.max(pixels)
+
+        data.append({
+            "Experiment No.": experiment_no,
+            "Microcosm No.": microcosm_no,
+            "Day No.": day_no,
+            "Date Taken": date_taken,
+            "Image": filename,
+            "Contour_Index": i,
+            "Area_px2": area,
+            "Area_mm2": area * (pixel_to_mm ** 2),
+            "Perimeter_px": perimeter,
+            "Perimeter_mm": perimeter * pixel_to_mm,
+            "Circularity": circularity,
+            "Equivalent_Spherical_Diameter_px": esd,
+            "Equivalent_Spherical_Diameter_mm": esd * pixel_to_mm,
+            "BoundingBox_X_px": x,
+            "BoundingBox_Y_px": y,
+            "BoundingBox_Width_px": w,
+            "BoundingBox_Height_px": h,
+            "Aspect_Ratio": aspect_ratio,
+            "Elongation": elongation,
+            "Length_px": length,
+            "Width_px": width,
+            "Length_mm": length * pixel_to_mm,
+            "Width_mm": width * pixel_to_mm,
+            "Volume_px3": volume,
+            "Volume_mm3": volume * (pixel_to_mm ** 3),
+            "Mean_Brightness": mean_brightness,
+            "Min_Brightness": min_brightness,
+            "Max_Brightness": max_brightness,
+            "Num_Black_Holes": num_holes,
+            "Total_Hole_Area_px2": total_hole_area,
+            "Total_Hole_Area_mm2": total_hole_area_mm2,
+            "Porosity": porosity
+        })
+
+    return data
+
+if __name__ == "__main__":
+    # === FOLDER LIST ===
+    input_folders = ["Insert folder URL"]
+
+    for input_folder in input_folders:
+        if not os.path.exists(input_folder):
+            print(f"⚠️ Folder not found: {input_folder}, skipping...")
+            continue
+
+        print(f"📂 Processing folder: {input_folder}")
+
+        output_folder = input_folder.replace("Output", "Data")
+        os.makedirs(output_folder, exist_ok=True)
+        output_csv_path = os.path.join(output_folder, "results.csv")
+
+        filenames = [
+            f for f in os.listdir(input_folder)
+            if f.lower().endswith((".png", ".jpg", ".jpeg"))
+        ]
+
+        args_list = [
+            (input_folder, filename, original_width, original_height, original_pixels_per_mm)
+            for filename in filenames
+        ]
+
+        with ProcessPoolExecutor() as executor:
+            all_results = list(tqdm(executor.map(process_image, args_list), total=len(args_list)))
+
+        contour_data = [item for sublist in all_results for item in sublist]
+        df = pd.DataFrame(contour_data)
+        df.to_csv(output_csv_path, index=False)
+        print(f"✅ Saved results to {output_csv_path}")
